@@ -3,6 +3,9 @@
 import logging
 import logging.handlers
 import pathlib
+import time
+
+import mqtt
 
 
 class Sandman:
@@ -71,6 +74,18 @@ class Sandman:
     def run(self) -> None:
         """Run the program."""
         self.__logger.info("Starting Sandman...")
+
+        self.__mqtt_client = mqtt.MQTTClient()
+
+        if self.__mqtt_client.connect() == False:
+            return
+
+        if self.__mqtt_client.start() == False:
+            return
+
+        while True:
+            # Sleep for 10 µs.
+            time.sleep(0.01)
 
     def is_testing(self) -> bool:
         """Return whether the app is in test mode."""
