@@ -5,6 +5,7 @@ import logging.handlers
 import pathlib
 import time
 
+import commands
 import mqtt
 
 
@@ -83,13 +84,29 @@ class Sandman:
         if self.__mqtt_client.start() == False:
             return
 
+        self.__mqtt_client.play_notification("Sandman initialized.")
+
         while True:
+            self.__process_commands()
+
+            self.__mqtt_client.process()
+
             # Sleep for 10 µs.
             time.sleep(0.01)
 
     def is_testing(self) -> bool:
         """Return whether the app is in test mode."""
         return self.__is_testing
+
+    def __process_commands(self) -> None:
+        """Process pending commands."""
+        command = self.__mqtt_client.pop_command()
+
+        while command is not None:
+            if isinstance(command, commands.StatusCommand):
+                self.__mqtt_client.play_notification("Sandman is running.")
+
+            command = self.__mqtt_client.pop_command()
 
 
 def create_app(options: dict[any] = None) -> Sandman:

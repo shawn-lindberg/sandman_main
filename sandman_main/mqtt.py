@@ -1,10 +1,22 @@
 """Everything needed to use MQTT."""
 
+import collections
+import dataclasses
+import json
 import logging
 import time
 
+import commands
 import paho.mqtt.client
 import paho.mqtt.enums
+
+
+@dataclasses.dataclass
+class _MessageInfo:
+    """Represents a message that has been received or needs to be sent."""
+
+    topic: str
+    payload: str
 
 
 class MQTTClient:
@@ -13,13 +25,16 @@ class MQTTClient:
     def __init__(self) -> None:
         """Initialize the instance."""
         self.__logger = logging.getLogger("sandman.mqtt_client")
+        self.__pending_commands = collections.deque()
+        self.__pending_notifications = collections.deque()
+        self.__is_connected = False
         pass
 
     def connect(self) -> bool:
         """Connect to the broker."""
         self.__client = paho.mqtt.client.Client()
 
-        self.__client.on_connect = self.handle_connect
+        self.__client.on_connect = self.__handle_connect
 
         host = "localhost"
         port = 12183
@@ -52,7 +67,7 @@ class MQTTClient:
                 )
 
             if connect_failed == False:
-                self.__logger.info("Connected to MQTT host.")
+                self.__logger.info("Initiated connection to MQTT host.")
                 return True
 
             self.__logger.info(
@@ -80,7 +95,37 @@ class MQTTClient:
 
         return True
 
-    def handle_connect(
+    def pop_command(self) -> None:
+        """Pop the next pending command off the queue, if there is one.
+
+        Returns the command or None if the queue is empty.
+        """
+        try:
+            command = self.__pending_commands.popleft()
+        except IndexError:
+            return None
+
+        return command
+
+    def play_notification(self, notification: str) -> None:
+        """Play the provided notification using the dialogue manager."""
+        self.__pending_notifications.append(notification)
+
+    def process(self) -> None:
+        """Process things like pending messages, etc."""
+        if self.__is_connected == False:
+            return
+
+        # Publish all of the pending notifications.
+        while True:
+            try:
+                notification = self.__pending_notifications.popleft()
+            except IndexError:
+                break
+
+            self._publish_notification(notification)
+
+    def __handle_connect(
         self,
         client: paho.mqtt.client.Client,
         userdata: any,
@@ -95,10 +140,11 @@ class MQTTClient:
             return
 
         self.__logger.info("Finished connecting to MQTT host.")
+        self.__is_connected = True
 
         # Register callbacks for the topics.
         self.__client.message_callback_add(
-            "hermes/intent/#", self.handle_intent_message
+            "hermes/intent/#", self.__handle_intent_message
         )
 
         # Subscribe all of the topics in one go.
@@ -110,15 +156,58 @@ class MQTTClient:
         if subscribe_result != paho.mqtt.enums.MQTTErrorCode.MQTT_ERR_SUCCESS:
             self.__logger.error("Failed to subscribe to topics.")
 
-    def handle_intent_message(
+    def __handle_intent_message(
         self,
         client: paho.mqtt.client.Client,
         userdata: any,
         message: paho.mqtt.client.MQTTMessage,
     ) -> None:
         """Handle intent messages."""
+        payload = message.payload.decode("utf8")
+
         self.__logger.debug(
             "Received a message on topic '%s': %s",
             message.topic,
-            message.payload.decode(),
+            payload,
         )
+
+        # The payload needs to be converted to JSON.
+        try:
+            payload_json = json.loads(payload)
+
+        except json.JSONDecodeError as exception:
+            self.__logger.warning(
+                "JSON decode exception raised while handling intent "
+                + "message: %s",
+                exception,
+            )
+            return
+
+        # Try to get the intent name.
+        try:
+            intent = payload_json["intent"]
+
+        except KeyError:
+            self.__logger.warning("Invalid intent message received.")
+            return
+
+        try:
+            intent_name = intent["intentName"]
+
+        except KeyError:
+            self.__logger.warning("Invalid intent message received.")
+            return
+
+        if intent_name == "GetStatus":
+            self.__logger.info("Received a get status intent.")
+            self.__pending_commands.append(commands.StatusCommand())
+
+    def _publish_notification(self, text: str) -> None:
+        """Publish the provided notification to the dialogue manager."""
+        payload_json = {
+            "init": {"type": "notification", "text": text},
+            "siteId": "default",
+        }
+        payload = json.dumps(payload_json)
+
+        self.__client.publish("hermes/dialogueManager/startSession", payload)
