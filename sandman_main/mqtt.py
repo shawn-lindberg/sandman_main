@@ -191,24 +191,10 @@ class MQTTClient:
             )
             return
 
-        # Try to get the intent name.
-        try:
-            intent = payload_json["intent"]
+        command = commands.parse_from_intent(payload_json)
 
-        except KeyError:
-            self.__logger.warning("Invalid intent message received.")
-            return
-
-        try:
-            intent_name = intent["intentName"]
-
-        except KeyError:
-            self.__logger.warning("Invalid intent message received.")
-            return
-
-        if intent_name == "GetStatus":
-            self.__logger.info("Received a get status intent.")
-            self.__pending_commands.append(commands.StatusCommand())
+        if command is not None:
+            self.__pending_commands.append(command)
 
     def __publish_notification(self, text: str) -> None:
         """Publish the provided notification to the dialogue manager."""
