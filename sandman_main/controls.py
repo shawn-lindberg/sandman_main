@@ -7,6 +7,7 @@ import enum
 import logging
 import typing
 
+import gpio
 import timer
 
 
@@ -40,8 +41,7 @@ class Control:
         self,
         name: str,
         timer: timer.Timer,
-        moving_duration_ms: int,
-        cool_down_duration_ms: int,
+        gpio_manager: gpio.GPIOManager,
     ) -> None:
         """Initialize the instance."""
         self.__logger = logging.getLogger("sandman.control." + name)
@@ -49,15 +49,130 @@ class Control:
         self.__desired_state = Control.State.IDLE
         self.__name = name
         self.__timer = timer
+        self.__gpio_manager: gpio.GPIOManager = gpio_manager
+        self.__up_gpio_line: int = -1
+        self.__down_gpio_line: int = -1
+        self.__moving_duration_ms: int = -1
+        self.__cool_down_duration_ms: int = -1
+        self.__initialized = False
+
+    def initialize(
+        self,
+        up_gpio_line: int,
+        down_gpio_line: int,
+        moving_duration_ms: int,
+        cool_down_duration_ms: int,
+    ) -> bool:
+        """Initialize the control for use."""
+        if self.__initialized == True:
+            self.__logger.error(
+                "Tried to initialize control, but it's already initialized."
+            )
+            return False
+
+        if up_gpio_line < 0:
+            self.__logger.error(
+                "Invalid GPIO line for moving up: %d.", up_gpio_line
+            )
+            return False
+
+        if down_gpio_line < 0:
+            self.__logger.error(
+                "Invalid GPIO line for moving down: %d.", down_gpio_line
+            )
+            return False
+
+        if up_gpio_line == down_gpio_line:
+            self.__logger.error(
+                "Control must use different GPIO lines for moving up and down."
+            )
+            return False
+
+        if moving_duration_ms < 1:
+            self.__logger.error(
+                "Invalid moving duration for control: %d ms.",
+                moving_duration_ms,
+            )
+            return False
+
+        if cool_down_duration_ms < 0:
+            self.__logger.error(
+                "Invalid cool down duration for control: %d ms.",
+                cool_down_duration_ms,
+            )
+            return False
+
+        self.__up_gpio_line = up_gpio_line
+        self.__down_gpio_line = down_gpio_line
         self.__moving_duration_ms = moving_duration_ms
         self.__cool_down_duration_ms = cool_down_duration_ms
 
+        # Try to acquire the GPIO lines.
+        if (
+            self.__gpio_manager.acquire_output_line(self.__up_gpio_line)
+            == False
+        ):
+            self.__logger.error("Failed to acquire up GPIO line.")
+            return False
+
+        if (
+            self.__gpio_manager.acquire_output_line(self.__down_gpio_line)
+            == False
+        ):
+            self.__logger.error("Failed to acquire down GPIO line.")
+            self.__gpio_manager.release_output_line(self.__up_gpio_line)
+            return False
+
+        # This should be redundant, but set both lines to an active just in
+        # case.
+        self.__gpio_manager.set_line_inactive(self.__up_gpio_line)
+        self.__gpio_manager.set_line_inactive(self.__down_gpio_line)
+
+        self.__initialized = True
+
         self.__logger.info(
-            "Initialized control with moving duration %d ms and cool down "
-            + "duration %d ms.",
+            "Initialized control with GPIO lines [up %d, down %d] and with "
+            + "moving duration %d ms and cool down duration %d ms.",
+            self.__up_gpio_line,
+            self.__down_gpio_line,
             self.__moving_duration_ms,
             self.__cool_down_duration_ms,
         )
+
+        return True
+
+    def uninitialize(self) -> bool:
+        """Uninitialize the control after use."""
+        if self.__initialized == False:
+            self.__logger.error(
+                "Tried to uninitialize control, but it's already "
+                + "uninitialized."
+            )
+            return False
+
+        # Try to release both GPIO lines.
+        release_failed = False
+
+        if (
+            self.__gpio_manager.release_output_line(self.__up_gpio_line)
+            == False
+        ):
+            self.__logger.error("Failed to release up GPIO line.")
+            release_failed = True
+
+        if (
+            self.__gpio_manager.release_output_line(self.__down_gpio_line)
+            == False
+        ):
+            self.__logger.error("Failed to release down GPIO line.")
+            release_failed = True
+
+        self.__initialized = False
+
+        if release_failed == True:
+            return False
+
+        return True
 
     @property
     def state(self) -> State:
@@ -66,6 +181,11 @@ class Control:
 
     def set_desired_state(self, state: State) -> None:
         """Set the next state."""
+        if self.__initialized == False:
+            raise ValueError(
+                "Attempted to set state on an uninitialized control."
+            )
+
         if state == Control.State.COOL_DOWN:
             return
 
@@ -75,6 +195,9 @@ class Control:
 
     def process(self, notifications: list[str]) -> None:
         """Process the control."""
+        if self.__initialized == False:
+            raise ValueError("Attempted to process an uninitialized control.")
+
         match self.__state:
             case Control.State.IDLE:
                 self.__process_idle_state(notifications)
@@ -98,11 +221,23 @@ class Control:
 
         match state:
             case Control.State.MOVE_UP:
+                self.__gpio_manager.set_line_inactive(self.__down_gpio_line)
+                self.__gpio_manager.set_line_active(self.__up_gpio_line)
                 notifications.append(f"Raising the {self.__name}.")
+
             case Control.State.MOVE_DOWN:
+                self.__gpio_manager.set_line_inactive(self.__up_gpio_line)
+                self.__gpio_manager.set_line_active(self.__down_gpio_line)
                 notifications.append(f"Lowering the {self.__name}.")
+
             case Control.State.COOL_DOWN:
+                self.__gpio_manager.set_line_inactive(self.__up_gpio_line)
+                self.__gpio_manager.set_line_inactive(self.__down_gpio_line)
                 notifications.append(f"{self.__name} stopped.")
+
+            case _:
+                self.__gpio_manager.set_line_inactive(self.__up_gpio_line)
+                self.__gpio_manager.set_line_inactive(self.__down_gpio_line)
 
         self.__state = state
         self.__state_start_time = self.__timer.get_current_time()

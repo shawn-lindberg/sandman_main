@@ -1,23 +1,123 @@
 """Tests controls."""
 
+import pytest
+
 import sandman_main.controls as controls
+import sandman_main.gpio as gpio
 import tests.test_timer as test_timer
 
 
 def test_control_initialization() -> None:
     """Test control initialization."""
     timer = test_timer.TestTimer()
+    gpio_manager = gpio.GPIOManager(is_live_mode=False)
+    gpio_manager.initialize()
 
     # A control should start off idle.
-    control = controls.Control(
-        "test_initialization",
-        timer,
-        moving_duration_ms=10,
-        cool_down_duration_ms=5,
-    )
+    control = controls.Control("test_initialization", timer, gpio_manager)
     assert control.state == controls.Control.State.IDLE
+    assert len(gpio_manager.acquired_lines) == 0
 
     notifications = []
+
+    # We cannot use the control before it is initialized.
+    with pytest.raises(ValueError):
+        control.set_desired_state(controls.Control.State.IDLE)
+
+    with pytest.raises(ValueError):
+        control.process(notifications)
+
+    # Controls start out uninitialized.
+    assert control.uninitialize() == False
+
+    # Initialization will fail if either line is negative or if the lines are
+    # the same.
+    assert (
+        control.initialize(
+            up_gpio_line=-1,
+            down_gpio_line=2,
+            moving_duration_ms=10,
+            cool_down_duration_ms=5,
+        )
+        == False
+    )
+    assert len(gpio_manager.acquired_lines) == 0
+
+    assert (
+        control.initialize(
+            up_gpio_line=1,
+            down_gpio_line=-5,
+            moving_duration_ms=10,
+            cool_down_duration_ms=5,
+        )
+        == False
+    )
+    assert len(gpio_manager.acquired_lines) == 0
+
+    assert (
+        control.initialize(
+            up_gpio_line=1,
+            down_gpio_line=1,
+            moving_duration_ms=10,
+            cool_down_duration_ms=5,
+        )
+        == False
+    )
+    assert len(gpio_manager.acquired_lines) == 0
+
+    # The moving duration must be greater than zero and cool down must not be
+    # negative.
+    assert (
+        control.initialize(
+            up_gpio_line=1,
+            down_gpio_line=2,
+            moving_duration_ms=0,
+            cool_down_duration_ms=5,
+        )
+        == False
+    )
+    assert len(gpio_manager.acquired_lines) == 0
+
+    assert (
+        control.initialize(
+            up_gpio_line=1,
+            down_gpio_line=2,
+            moving_duration_ms=10,
+            cool_down_duration_ms=-1,
+        )
+        == False
+    )
+    assert len(gpio_manager.acquired_lines) == 0
+
+    # This one should finally succeeded.
+    assert (
+        control.initialize(
+            up_gpio_line=1,
+            down_gpio_line=2,
+            moving_duration_ms=10,
+            cool_down_duration_ms=5,
+        )
+        == True
+    )
+    acquired_lines = gpio_manager.acquired_lines
+    assert len(acquired_lines) == 2
+    assert 1 in acquired_lines
+    assert 2 in acquired_lines
+
+    # But we can't initialize again.
+    assert (
+        control.initialize(
+            up_gpio_line=1,
+            down_gpio_line=2,
+            moving_duration_ms=10,
+            cool_down_duration_ms=5,
+        )
+        == False
+    )
+    acquired_lines = gpio_manager.acquired_lines
+    assert len(acquired_lines) == 2
+    assert 1 in acquired_lines
+    assert 2 in acquired_lines
 
     # It should remain idle without change.
     control.process(notifications)
@@ -26,6 +126,68 @@ def test_control_initialization() -> None:
     timer.set_current_time_ms(1000)
     control.process(notifications)
     assert control.state == controls.Control.State.IDLE
+
+    # Make another control to test that different controls cannot use the same
+    # GPIO lines.
+    control2 = controls.Control("test_initialization2", timer, gpio_manager)
+
+    assert (
+        control2.initialize(
+            up_gpio_line=1,
+            down_gpio_line=3,
+            moving_duration_ms=10,
+            cool_down_duration_ms=5,
+        )
+        == False
+    )
+    acquired_lines = gpio_manager.acquired_lines
+    assert len(acquired_lines) == 2
+    assert 1 in acquired_lines
+    assert 2 in acquired_lines
+
+    assert (
+        control2.initialize(
+            up_gpio_line=3,
+            down_gpio_line=2,
+            moving_duration_ms=10,
+            cool_down_duration_ms=5,
+        )
+        == False
+    )
+    acquired_lines = gpio_manager.acquired_lines
+    assert len(acquired_lines) == 2
+    assert 1 in acquired_lines
+    assert 2 in acquired_lines
+
+    # This one should succeed.
+    assert (
+        control2.initialize(
+            up_gpio_line=3,
+            down_gpio_line=4,
+            moving_duration_ms=10,
+            cool_down_duration_ms=5,
+        )
+        == True
+    )
+    acquired_lines = gpio_manager.acquired_lines
+    assert len(acquired_lines) == 4
+    assert 1 in acquired_lines
+    assert 2 in acquired_lines
+    assert 3 in acquired_lines
+    assert 4 in acquired_lines
+
+    assert control2.uninitialize() == True
+    acquired_lines = gpio_manager.acquired_lines
+    assert len(acquired_lines) == 2
+    assert 1 in acquired_lines
+    assert 2 in acquired_lines
+
+    assert control.uninitialize() == True
+    assert len(gpio_manager.acquired_lines) == 0
+    assert control.uninitialize() == False
+    assert len(gpio_manager.acquired_lines) == 0
+
+    gpio_manager.uninitialize()
 
 
 def _test_control_moving_flow(
@@ -36,11 +198,25 @@ def _test_control_moving_flow(
 ) -> None:
     """Test control moving state flow."""
     timer = test_timer.TestTimer()
+    gpio_manager = gpio.GPIOManager(is_live_mode=False)
+    gpio_manager.initialize()
 
     control = controls.Control(
-        control_name, timer, moving_duration_ms, cool_down_duration_ms
+        control_name,
+        timer,
+        gpio_manager,
     )
     assert control.state == controls.Control.State.IDLE
+
+    assert (
+        control.initialize(
+            up_gpio_line=1,
+            down_gpio_line=2,
+            moving_duration_ms=moving_duration_ms,
+            cool_down_duration_ms=cool_down_duration_ms,
+        )
+        == True
+    )
 
     notifications = []
 
@@ -82,6 +258,9 @@ def _test_control_moving_flow(
     control.process(notifications)
     assert control.state == controls.Control.State.IDLE
 
+    assert control.uninitialize() == True
+    gpio_manager.uninitialize()
+
 
 def test_control_moving_up() -> None:
     """Test control moving up state flow."""
@@ -109,9 +288,17 @@ def test_control_moving_down() -> None:
 
 def test_control_moving_switch() -> None:
     """Test that we can alternate between moving directions."""
+    gpio_manager = gpio.GPIOManager(is_live_mode=False)
+    gpio_manager.initialize()
+
     control = controls.Control(
         "test_moving_switch",
         test_timer.TestTimer(),
+        gpio_manager,
+    )
+    control.initialize(
+        up_gpio_line=1,
+        down_gpio_line=2,
         moving_duration_ms=10,
         cool_down_duration_ms=5,
     )
@@ -134,16 +321,26 @@ def test_control_moving_switch() -> None:
     control.process(notifications)
     assert control.state == controls.Control.State.MOVE_UP
 
+    assert control.uninitialize() == True
+    gpio_manager.uninitialize()
+
 
 def test_control_moving_switch_time() -> None:
     """Test that switching moving direction resets the duration."""
     timer = test_timer.TestTimer()
+    gpio_manager = gpio.GPIOManager(is_live_mode=False)
+    gpio_manager.initialize()
 
     moving_duration_ms = 10
     control = controls.Control(
         "test_moving_switch_time",
         timer,
-        moving_duration_ms,
+        gpio_manager,
+    )
+    control.initialize(
+        up_gpio_line=1,
+        down_gpio_line=2,
+        moving_duration_ms=moving_duration_ms,
         cool_down_duration_ms=5,
     )
 
@@ -169,12 +366,23 @@ def test_control_moving_switch_time() -> None:
     control.process(notifications)
     assert control.state == controls.Control.State.COOL_DOWN
 
+    assert control.uninitialize() == True
+    gpio_manager.uninitialize()
+
 
 def test_control_moving_stop() -> None:
     """Test that we can stop moving."""
+    gpio_manager = gpio.GPIOManager(is_live_mode=False)
+    gpio_manager.initialize()
+
     control = controls.Control(
         "test_moving_stop",
         test_timer.TestTimer(),
+        gpio_manager,
+    )
+    control.initialize(
+        up_gpio_line=1,
+        down_gpio_line=2,
         moving_duration_ms=10,
         cool_down_duration_ms=5,
     )
@@ -192,9 +400,16 @@ def test_control_moving_stop() -> None:
     control.process(notifications)
     assert control.state == controls.Control.State.COOL_DOWN
 
+    assert control.uninitialize() == True
+
     control = controls.Control(
         "test_moving_stop",
         test_timer.TestTimer(),
+        gpio_manager,
+    )
+    control.initialize(
+        up_gpio_line=1,
+        down_gpio_line=2,
         moving_duration_ms=10,
         cool_down_duration_ms=5,
     )
@@ -208,15 +423,28 @@ def test_control_moving_stop() -> None:
     control.process(notifications)
     assert control.state == controls.Control.State.COOL_DOWN
 
+    assert control.uninitialize() == True
+    gpio_manager.uninitialize()
+
 
 def test_control_cool_down() -> None:
     """Test the cool down state."""
     timer = test_timer.TestTimer()
+    gpio_manager = gpio.GPIOManager(is_live_mode=False)
+    gpio_manager.initialize()
 
     moving_duration_ms = 4
     cool_down_duration_ms = 10
     control = controls.Control(
-        "test_cool_down", timer, moving_duration_ms, cool_down_duration_ms
+        "test_cool_down",
+        timer,
+        gpio_manager,
+    )
+    control.initialize(
+        up_gpio_line=1,
+        down_gpio_line=2,
+        moving_duration_ms=moving_duration_ms,
+        cool_down_duration_ms=cool_down_duration_ms,
     )
     assert control.state == controls.Control.State.IDLE
 
@@ -253,12 +481,23 @@ def test_control_cool_down() -> None:
     control.process(notifications)
     assert control.state == controls.Control.State.IDLE
 
+    assert control.uninitialize() == True
+    gpio_manager.uninitialize()
+
 
 def test_control_no_desired_cool_down() -> None:
     """Test that we cannot set cool down as a desired state."""
+    gpio_manager = gpio.GPIOManager(is_live_mode=False)
+    gpio_manager.initialize()
+
     control = controls.Control(
         "test_desired_cool_down",
         test_timer.TestTimer(),
+        gpio_manager,
+    )
+    control.initialize(
+        up_gpio_line=1,
+        down_gpio_line=2,
         moving_duration_ms=10,
         cool_down_duration_ms=5,
     )
@@ -283,3 +522,6 @@ def test_control_no_desired_cool_down() -> None:
     control.set_desired_state(controls.Control.State.COOL_DOWN)
     control.process(notifications)
     assert control.state == controls.Control.State.MOVE_UP
+
+    assert control.uninitialize() == True
+    gpio_manager.uninitialize()
