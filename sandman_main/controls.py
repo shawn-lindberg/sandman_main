@@ -7,8 +7,7 @@ import enum
 import logging
 import typing
 
-import gpio
-import timer
+from . import gpio, timer
 
 
 class Control:

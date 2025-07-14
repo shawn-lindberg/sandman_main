@@ -7,10 +7,11 @@ import logging
 import time
 import typing
 
-import commands
 import paho.mqtt.client
 import paho.mqtt.enums
 import paho.mqtt.reasoncodes
+
+from . import commands
 
 
 @dataclasses.dataclass
