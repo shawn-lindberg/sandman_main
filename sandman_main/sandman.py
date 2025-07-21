@@ -6,11 +6,7 @@ import pathlib
 import time
 import typing
 
-import commands
-import controls
-import gpio
-import mqtt
-import timer
+from . import commands, controls, gpio, mqtt, timer
 
 
 class Sandman:
