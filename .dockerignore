@@ -1,0 +1,11 @@
+.github
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.venv
+.vscode
+
+rhasspy
+test
+
+**/__pycache__
