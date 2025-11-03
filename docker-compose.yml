@@ -10,6 +10,7 @@ services:
       - ${GPIO_GID}
     volumes:
       - ~:/home/app
+      - /etc/localtime:/etc/localtime:ro
     devices:
       - "/dev/gpiochip0:/dev/gpiochip0"
     networks:
