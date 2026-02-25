@@ -3,6 +3,7 @@
 import json
 import logging
 import pathlib
+import shutil
 import typing
 import zoneinfo
 
@@ -12,10 +13,15 @@ _logger = logging.getLogger("sandman.settings")
 class Settings:
     """Specifies the overall settings."""
 
+    DEFAULT_TIME_ZONE_NAME = "America/Chicago"
+    DEFAULT_STARTUP_DELAY_SEC = 4
+
     def __init__(self) -> None:
         """Initialize the control config."""
-        self.__time_zone_name: str = ""
-        self.__startup_delay_sec: int = -1
+        self.__time_zone_name: str = self.DEFAULT_TIME_ZONE_NAME
+        self.__startup_delay_sec: int = self.DEFAULT_STARTUP_DELAY_SEC
+        self.__was_any_missing_on_load = False
+        self.__was_any_invalid_on_load = False
 
     @property
     def time_zone_name(self) -> str:
@@ -51,6 +57,16 @@ class Settings:
             raise ValueError("Startup delay must be non-negative.")
 
         self.__startup_delay_sec = startup_delay_sec
+
+    @property
+    def was_any_missing_on_load(self) -> bool:
+        """Get whether there were any missing values when loading."""
+        return self.__was_any_missing_on_load
+
+    @property
+    def was_any_invalid_on_load(self) -> bool:
+        """Get whether there were any invalid values when loading."""
+        return self.__was_any_invalid_on_load
 
     def is_valid(self) -> bool:
         """Check whether these are valid settings."""
@@ -95,12 +111,14 @@ class Settings:
                     new_settings.time_zone_name = settings_json["timeZoneName"]
 
                 except KeyError:
+                    new_settings.__was_any_missing_on_load = True
                     _logger.warning(
                         "Missing 'timeZoneName' key in settings file '%s'.",
                         filename,
                     )
 
                 except (TypeError, ValueError):
+                    new_settings.__was_any_invalid_on_load = True
                     _logger.warning(
                         "Invalid time zone name '%s' in settings file '%s'.",
                         str(settings_json["timeZoneName"]),
@@ -113,12 +131,14 @@ class Settings:
                     ]
 
                 except KeyError:
+                    new_settings.__was_any_missing_on_load = True
                     _logger.warning(
                         "Missing 'startupDelaySec' key in settings file '%s'.",
                         filename,
                     )
 
                 except (TypeError, ValueError):
+                    new_settings.__was_any_invalid_on_load = True
                     _logger.warning(
                         "Invalid startup delay '%s' in settings file '%s'.",
                         str(settings_json["startupDelaySec"]),
@@ -151,18 +171,47 @@ class Settings:
             raise error
 
 
-def bootstrap_settings(base_dir: str) -> None:
-    """Handle bootstrapping for settings."""
+def load_or_create_settings(base_dir: str) -> Settings:
+    """Load or create settings.
+
+    If settings are missing, default values are saved. If they exist but have
+    any missing or invalid values, they will be replaced by defaults and
+    saved.
+    """
     settings_path = pathlib.Path(base_dir + "settings.cfg")
 
-    if settings_path.exists() == True:
-        return
+    if settings_path.exists() == False:
+        _logger.info(
+            "Creating missing settings file '%s'.", str(settings_path)
+        )
 
-    _logger.info("Creating missing settings file '%s'.", str(settings_path))
+        new_settings = Settings()
+        new_settings.save_to_file(str(settings_path))
 
-    # Set up some default settings.
-    new_settings = Settings()
-    new_settings.time_zone_name = "America/Chicago"
-    new_settings.startup_delay_sec = 4
+        return new_settings
 
-    new_settings.save_to_file(str(settings_path))
+    loaded_settings = Settings.parse_from_file(str(settings_path))
+
+    # If there were any invalid values, save a copy for investigation purposes.
+    if loaded_settings.was_any_invalid_on_load == True:
+        # Replace this once we are on Python 3.14 where pathlib has file copy
+        # operations.
+        backup_filename = str(settings_path) + ".bak"
+        shutil.copyfile(str(settings_path), backup_filename)
+        _logger.warning(
+            "Settings file '%s' had an invalid value. A backup copy '%s' for "
+            + "investigation.",
+            str(settings_path),
+            backup_filename,
+        )
+
+    if loaded_settings.was_any_missing_on_load == True:
+        _logger.info(
+            "Settings file '%s' had a missing value but it was filled with the"
+            + "the default.",
+            str(settings_path),
+        )
+
+    loaded_settings.save_to_file(str(settings_path))
+
+    return loaded_settings
