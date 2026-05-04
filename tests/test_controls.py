@@ -340,16 +340,21 @@ def test_control_initialization() -> None:
     # A control should start off idle.
     control = controls.Control("test_initialization", timer, gpio_manager)
     assert control.state == controls.Control.State.IDLE
+    assert control.locked == False
     assert len(gpio_manager.acquired_lines) == 0
 
-    notifications = []
+    notification_list: list[str] = []
 
     # We cannot use the control before it is initialized.
     with pytest.raises(ValueError):
-        control.set_desired_state(controls.Control.State.IDLE)
+        control.set_desired_state(
+            notification_list, controls.Control.State.IDLE
+        )
+    assert len(notification_list) == 0
 
     with pytest.raises(ValueError):
-        control.process(notifications)
+        control.process(notification_list)
+    assert len(notification_list) == 0
 
     # Controls start out uninitialized.
     assert control.uninitialize() == False
@@ -444,12 +449,14 @@ def test_control_initialization() -> None:
     assert 2 in acquired_lines
 
     # It should remain idle without change.
-    control.process(notifications)
+    control.process(notification_list)
     assert control.state == controls.Control.State.IDLE
+    assert len(notification_list) == 0
 
     timer.set_current_time_ms(1000)
-    control.process(notifications)
+    control.process(notification_list)
     assert control.state == controls.Control.State.IDLE
+    assert len(notification_list) == 0
 
     # Make another control to test that different controls cannot use the same
     # GPIO lines.
@@ -542,45 +549,61 @@ def _test_control_moving_flow(
         == True
     )
 
-    notifications = []
+    notification_list: list[str] = []
 
     # There should be no state change after setting the desired state without
     # processing.
-    control.set_desired_state(desired_state)
+    control.set_desired_state(notification_list, desired_state)
     assert control.state == controls.Control.State.IDLE
+    assert len(notification_list) == 0
 
     # Immediately after processing the state should change.
-    control.process(notifications)
+    notification_list: list[str] = []
+    control.process(notification_list)
     assert control.state == desired_state
+    assert len(notification_list) == 1
 
     # We should remain in this state indefinitely without time changing.
+    notification_list: list[str] = []
+
     for _iteration in range(50):
-        control.process(notifications)
+        control.process(notification_list)
         assert control.state == desired_state
+        assert len(notification_list) == 0
 
     # We should remain in this state until just before the moving duration is
     # over.
+    notification_list: list[str] = []
+
     for time_ms in range(moving_duration_ms):
         timer.set_current_time_ms(time_ms)
-        control.process(notifications)
+        control.process(notification_list)
         assert control.state == desired_state
+        assert len(notification_list) == 0
 
     # After time is up, we should transition to cool down.
+    notification_list: list[str] = []
     timer.set_current_time_ms(moving_duration_ms)
-    control.process(notifications)
+    control.process(notification_list)
     assert control.state == controls.Control.State.COOL_DOWN
+    assert len(notification_list) == 1
 
     # We should remain in this state until just before the cooldown duration
     # is over.
+    notification_list: list[str] = []
+
     for time_ms in range(cool_down_duration_ms):
         timer.set_current_time_ms(moving_duration_ms + time_ms)
-        control.process(notifications)
+        control.process(notification_list)
         assert control.state == controls.Control.State.COOL_DOWN
+        assert len(notification_list) == 0
 
     # After time is up, we should transition to idle.
+    notification_list: list[str] = []
     timer.set_current_time_ms(moving_duration_ms + cool_down_duration_ms)
-    control.process(notifications)
+    control.process(notification_list)
     assert control.state == controls.Control.State.IDLE
+    assert len(notification_list) == 0
 
     assert control.uninitialize() == True
     gpio_manager.uninitialize()
@@ -627,23 +650,37 @@ def test_control_moving_switch() -> None:
         cool_down_duration_ms=5,
     )
 
-    notifications = []
+    notification_list: list[str] = []
 
     # We should be able to immediately transition between direction without
     # changing time, but processing steps are required.
-    control.set_desired_state(controls.Control.State.MOVE_UP)
-    control.process(notifications)
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_UP
+    )
+    assert len(notification_list) == 0
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_UP
+    assert len(notification_list) == 1
+    notification_list: list[str] = []
 
-    control.set_desired_state(controls.Control.State.MOVE_DOWN)
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_DOWN
+    )
     assert control.state == controls.Control.State.MOVE_UP
-    control.process(notifications)
+    assert len(notification_list) == 0
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_DOWN
+    assert len(notification_list) == 1
 
-    control.set_desired_state(controls.Control.State.MOVE_UP)
+    notification_list: list[str] = []
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_UP
+    )
     assert control.state == controls.Control.State.MOVE_DOWN
-    control.process(notifications)
+    assert len(notification_list) == 0
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_UP
+    assert len(notification_list) == 1
 
     assert control.uninitialize() == True
     gpio_manager.uninitialize()
@@ -668,26 +705,30 @@ def test_control_moving_switch_time() -> None:
         cool_down_duration_ms=5,
     )
 
-    notifications = []
+    notification_list: list[str] = []
 
-    control.set_desired_state(controls.Control.State.MOVE_DOWN)
-    control.process(notifications)
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_DOWN
+    )
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_DOWN
 
     time_before_switch_ms = 4
     timer.set_current_time_ms(time_before_switch_ms)
-    control.set_desired_state(controls.Control.State.MOVE_UP)
-    control.process(notifications)
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_UP
+    )
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_UP
 
     # The duration after switch should be the full moving duration.
     for time_ms in range(moving_duration_ms):
         timer.set_current_time_ms(time_before_switch_ms + time_ms)
-        control.process(notifications)
+        control.process(notification_list)
         assert control.state == controls.Control.State.MOVE_UP
 
     timer.set_current_time_ms(time_before_switch_ms + moving_duration_ms)
-    control.process(notifications)
+    control.process(notification_list)
     assert control.state == controls.Control.State.COOL_DOWN
 
     assert control.uninitialize() == True
@@ -711,18 +752,24 @@ def test_control_moving_stop() -> None:
         cool_down_duration_ms=5,
     )
 
-    notifications = []
-
     # We should be able to immediately stop moving without changing time, but
     # processing steps are required.
-    control.set_desired_state(controls.Control.State.MOVE_UP)
-    control.process(notifications)
+    notification_list: list[str] = []
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_UP
+    )
+    assert len(notification_list) == 0
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_UP
+    assert len(notification_list) == 1
 
-    control.set_desired_state(controls.Control.State.IDLE)
+    notification_list: list[str] = []
+    control.set_desired_state(notification_list, controls.Control.State.IDLE)
     assert control.state == controls.Control.State.MOVE_UP
-    control.process(notifications)
+    assert len(notification_list) == 0
+    control.process(notification_list)
     assert control.state == controls.Control.State.COOL_DOWN
+    assert len(notification_list) == 1
 
     assert control.uninitialize() == True
 
@@ -738,14 +785,22 @@ def test_control_moving_stop() -> None:
         cool_down_duration_ms=5,
     )
 
-    control.set_desired_state(controls.Control.State.MOVE_DOWN)
-    control.process(notifications)
+    notification_list: list[str] = []
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_DOWN
+    )
+    assert len(notification_list) == 0
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_DOWN
+    assert len(notification_list) == 1
 
-    control.set_desired_state(controls.Control.State.IDLE)
+    notification_list: list[str] = []
+    control.set_desired_state(notification_list, controls.Control.State.IDLE)
     assert control.state == controls.Control.State.MOVE_DOWN
-    control.process(notifications)
+    assert len(notification_list) == 0
+    control.process(notification_list)
     assert control.state == controls.Control.State.COOL_DOWN
+    assert len(notification_list) == 1
 
     assert control.uninitialize() == True
     gpio_manager.uninitialize()
@@ -772,37 +827,45 @@ def test_control_cool_down() -> None:
     )
     assert control.state == controls.Control.State.IDLE
 
-    notifications: list[str] = []
+    notification_list: list[str] = []
 
     # First we need to get into the cool down state.
-    control.set_desired_state(controls.Control.State.MOVE_DOWN)
-    control.process(notifications)
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_DOWN
+    )
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_DOWN
     timer.set_current_time_ms(moving_duration_ms)
-    control.process(notifications)
+    control.process(notification_list)
     assert control.state == controls.Control.State.COOL_DOWN
 
     # We cannot change the state during the cool down.
     for time_ms in range(cool_down_duration_ms):
         timer.set_current_time_ms(moving_duration_ms + time_ms)
 
-        control.set_desired_state(controls.Control.State.IDLE)
-        control.process(notifications)
+        control.set_desired_state(
+            notification_list, controls.Control.State.IDLE
+        )
+        control.process(notification_list)
         assert control.state == controls.Control.State.COOL_DOWN
 
-        control.set_desired_state(controls.Control.State.MOVE_UP)
-        control.process(notifications)
+        control.set_desired_state(
+            notification_list, controls.Control.State.MOVE_UP
+        )
+        control.process(notification_list)
         assert control.state == controls.Control.State.COOL_DOWN
 
-        control.set_desired_state(controls.Control.State.MOVE_DOWN)
-        control.process(notifications)
+        control.set_desired_state(
+            notification_list, controls.Control.State.MOVE_DOWN
+        )
+        control.process(notification_list)
         assert control.state == controls.Control.State.COOL_DOWN
 
     # After the cool down is over, we should go idle and stay there.
     timer.set_current_time_ms(moving_duration_ms + cool_down_duration_ms)
-    control.process(notifications)
+    control.process(notification_list)
     assert control.state == controls.Control.State.IDLE
-    control.process(notifications)
+    control.process(notification_list)
     assert control.state == controls.Control.State.IDLE
 
     assert control.uninitialize() == True
@@ -826,26 +889,178 @@ def test_control_no_desired_cool_down() -> None:
         cool_down_duration_ms=5,
     )
 
-    notifications: list[str] = []
+    notification_list: list[str] = []
 
     assert control.state == controls.Control.State.IDLE
-    control.set_desired_state(controls.Control.State.COOL_DOWN)
-    control.process(notifications)
+    control.set_desired_state(
+        notification_list, controls.Control.State.COOL_DOWN
+    )
+    control.process(notification_list)
     assert control.state == controls.Control.State.IDLE
 
-    control.set_desired_state(controls.Control.State.MOVE_DOWN)
-    control.process(notifications)
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_DOWN
+    )
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_DOWN
-    control.set_desired_state(controls.Control.State.COOL_DOWN)
-    control.process(notifications)
+    control.set_desired_state(
+        notification_list, controls.Control.State.COOL_DOWN
+    )
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_DOWN
 
-    control.set_desired_state(controls.Control.State.MOVE_UP)
-    control.process(notifications)
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_UP
+    )
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_UP
-    control.set_desired_state(controls.Control.State.COOL_DOWN)
-    control.process(notifications)
+    control.set_desired_state(
+        notification_list, controls.Control.State.COOL_DOWN
+    )
+    control.process(notification_list)
     assert control.state == controls.Control.State.MOVE_UP
+
+    assert control.uninitialize() == True
+    gpio_manager.uninitialize()
+
+
+def test_control_lock() -> None:
+    """Test locking controls."""
+    gpio_manager = gpio.GPIOManager(is_live_mode=False)
+    gpio_manager.initialize()
+
+    timer = test_time_util.TestTimer()
+
+    control = controls.Control(
+        "test_lock",
+        timer,
+        gpio_manager,
+    )
+
+    moving_duration_ms = 5
+    cool_down_duration_ms = 2
+
+    control.initialize(
+        up_gpio_line=1,
+        down_gpio_line=2,
+        moving_duration_ms=moving_duration_ms,
+        cool_down_duration_ms=cool_down_duration_ms,
+    )
+    assert control.locked == False
+
+    # Start moving the control so that we can test that it continues moving
+    # even while locked.
+    notification_list: list[str] = []
+    assert control.state == controls.Control.State.IDLE
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_DOWN
+    )
+    assert len(notification_list) == 0
+    control.process(notification_list)
+    assert control.state == controls.Control.State.MOVE_DOWN
+    assert control.locked == False
+    assert len(notification_list) == 1
+
+    # Test trying to unlock a control that is already unlocked.
+    notification_list: list[str] = []
+    control.unlock(notification_list)
+    assert control.state == controls.Control.State.MOVE_DOWN
+    assert control.locked == False
+    assert len(notification_list) == 1
+    assert "The test_lock is already unlocked." in notification_list
+
+    notification_list: list[str] = []
+    control.process(notification_list)
+    assert control.state == controls.Control.State.MOVE_DOWN
+    assert control.locked == False
+    assert len(notification_list) == 0
+
+    # Test locking twice.
+    notification_list: list[str] = []
+    control.lock(notification_list)
+    assert control.state == controls.Control.State.MOVE_DOWN
+    assert control.locked == True
+    assert len(notification_list) == 1
+    assert "Locked the test_lock." in notification_list
+
+    notification_list: list[str] = []
+    control.process(notification_list)
+    assert control.state == controls.Control.State.MOVE_DOWN
+    assert control.locked == True
+    assert len(notification_list) == 0
+
+    notification_list: list[str] = []
+    control.lock(notification_list)
+    assert control.state == controls.Control.State.MOVE_DOWN
+    assert control.locked == True
+    assert len(notification_list) == 1
+    assert "The test_lock is already locked." in notification_list
+
+    notification_list: list[str] = []
+    control.process(notification_list)
+    assert control.state == controls.Control.State.MOVE_DOWN
+    assert control.locked == True
+    assert len(notification_list) == 0
+
+    # Make sure that the control still finishes moving.
+    notification_list: list[str] = []
+    timer.set_current_time_ms(moving_duration_ms)
+    control.process(notification_list)
+    assert control.state == controls.Control.State.COOL_DOWN
+    assert control.locked == True
+    assert len(notification_list) == 1
+
+    notification_list: list[str] = []
+    timer.set_current_time_ms(moving_duration_ms + cool_down_duration_ms)
+    control.process(notification_list)
+    assert control.state == controls.Control.State.IDLE
+    assert control.locked == True
+    assert len(notification_list) == 0
+
+    # Cannot start movement while locked.
+    notification_list: list[str] = []
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_UP
+    )
+    assert control.state == controls.Control.State.IDLE
+    assert control.locked == True
+    assert len(notification_list) == 1
+    assert "Cannot move the test_lock, it is locked." in notification_list
+
+    notification_list: list[str] = []
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_DOWN
+    )
+    assert control.state == controls.Control.State.IDLE
+    assert control.locked == True
+    assert len(notification_list) == 1
+    assert "Cannot move the test_lock, it is locked." in notification_list
+
+    # Now, unlock.
+    notification_list: list[str] = []
+    control.unlock(notification_list)
+    assert control.state == controls.Control.State.IDLE
+    assert control.locked == False
+    assert len(notification_list) == 1
+    assert "Unlocked the test_lock." in notification_list
+
+    notification_list: list[str] = []
+    control.process(notification_list)
+    assert control.state == controls.Control.State.IDLE
+    assert control.locked == False
+    assert len(notification_list) == 0
+
+    # We should be able to move controls again.
+    notification_list: list[str] = []
+    assert control.state == controls.Control.State.IDLE
+    control.set_desired_state(
+        notification_list, controls.Control.State.MOVE_UP
+    )
+    assert len(notification_list) == 0
+    control.process(notification_list)
+    assert control.state == controls.Control.State.MOVE_UP
+    assert control.locked == False
+    assert len(notification_list) == 1
 
     assert control.uninitialize() == True
     gpio_manager.uninitialize()
@@ -858,6 +1073,16 @@ def _check_control_state(
 ) -> None:
     """Check that a control with a name exists with the expected state."""
     assert name in states
+    if name in states:
+        assert states[name] == state
+
+
+def _check_control_lock_state(
+    states: dict[str, bool],
+    name: str,
+    state: bool,
+) -> None:
+    """Check that the control with a name has the expected lock state."""
     if name in states:
         assert states[name] == state
 
@@ -912,6 +1137,9 @@ def test_control_manager(tmp_path: pathlib.Path) -> None:
     states = control_manager.get_states()
     _check_control_state(states, "back", controls.Control.State.IDLE)
     _check_control_state(states, "legs", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
 
     control_manager.uninitialize()
     assert control_manager.num_controls == 0
@@ -921,6 +1149,9 @@ def test_control_manager(tmp_path: pathlib.Path) -> None:
     states = control_manager.get_states()
     _check_control_state(states, "back", controls.Control.State.IDLE)
     _check_control_state(states, "elevation", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "elevation", False)
 
     control_manager.uninitialize()
     assert control_manager.num_controls == 0
@@ -933,36 +1164,56 @@ def test_control_manager(tmp_path: pathlib.Path) -> None:
     _check_control_state(states, "back", controls.Control.State.IDLE)
     _check_control_state(states, "legs", controls.Control.State.IDLE)
     _check_control_state(states, "elevation", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", False)
 
     # Commands for nonexistent controls fail.
+    notification_list: list[str] = []
     command = commands.ControlCommand(
-        "chicken", commands.ControlCommand.Direction.DOWN, "test"
+        "chicken", commands.ControlCommand.Action.MOVE_DOWN, "test"
     )
-    assert control_manager.process_command(command) == False
+    assert control_manager.process_command(notification_list, command) == False
+    assert len(notification_list) == 0
     states = control_manager.get_states()
     _check_control_state(states, "back", controls.Control.State.IDLE)
     _check_control_state(states, "legs", controls.Control.State.IDLE)
     _check_control_state(states, "elevation", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", False)
 
     # Commands for controls that exist succeed, but state doesn't update before
     # processing.
     command = commands.ControlCommand(
-        "back", commands.ControlCommand.Direction.DOWN, "test"
+        "back", commands.ControlCommand.Action.MOVE_DOWN, "test"
     )
-    assert control_manager.process_command(command) == True
+    assert control_manager.process_command(notification_list, command) == True
+    assert len(notification_list) == 0
     states = control_manager.get_states()
     _check_control_state(states, "back", controls.Control.State.IDLE)
     _check_control_state(states, "legs", controls.Control.State.IDLE)
     _check_control_state(states, "elevation", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", False)
 
     command = commands.ControlCommand(
-        "elevation", commands.ControlCommand.Direction.UP, "test"
+        "elevation", commands.ControlCommand.Action.MOVE_UP, "test"
     )
-    assert control_manager.process_command(command) == True
+    assert control_manager.process_command(notification_list, command) == True
+    assert len(notification_list) == 0
     states = control_manager.get_states()
     _check_control_state(states, "back", controls.Control.State.IDLE)
     _check_control_state(states, "legs", controls.Control.State.IDLE)
     _check_control_state(states, "elevation", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", False)
 
     # Make sure that the correct events were written to the report file.
     report_manager.process()
@@ -981,7 +1232,7 @@ def test_control_manager(tmp_path: pathlib.Path) -> None:
     assert event_json["info"] == {
         "type": "control",
         "control": "back",
-        "action": "down",
+        "action": "move down",
         "source": "test",
     }
 
@@ -991,7 +1242,7 @@ def test_control_manager(tmp_path: pathlib.Path) -> None:
     assert event_json["info"] == {
         "type": "control",
         "control": "elevation",
-        "action": "up",
+        "action": "move up",
         "source": "test",
     }
 
@@ -1005,6 +1256,10 @@ def test_control_manager(tmp_path: pathlib.Path) -> None:
     _check_control_state(states, "back", controls.Control.State.MOVE_DOWN)
     _check_control_state(states, "legs", controls.Control.State.IDLE)
     _check_control_state(states, "elevation", controls.Control.State.MOVE_UP)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", False)
 
     # But nothing happens if we process again without advancing time.
     notification_list = []
@@ -1014,6 +1269,10 @@ def test_control_manager(tmp_path: pathlib.Path) -> None:
     _check_control_state(states, "back", controls.Control.State.MOVE_DOWN)
     _check_control_state(states, "legs", controls.Control.State.IDLE)
     _check_control_state(states, "elevation", controls.Control.State.MOVE_UP)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", False)
 
     # If we advance enough time, the elevation should stop.
     timer.set_current_time_ms(4000)
@@ -1025,6 +1284,105 @@ def test_control_manager(tmp_path: pathlib.Path) -> None:
     _check_control_state(states, "back", controls.Control.State.MOVE_DOWN)
     _check_control_state(states, "legs", controls.Control.State.IDLE)
     _check_control_state(states, "elevation", controls.Control.State.COOL_DOWN)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", False)
+
+    timer.set_current_time_ms(4025)
+    notification_list = []
+    control_manager.process_controls(notification_list)
+    assert len(notification_list) == 0
+    states = control_manager.get_states()
+    _check_control_state(states, "back", controls.Control.State.MOVE_DOWN)
+    _check_control_state(states, "legs", controls.Control.State.IDLE)
+    _check_control_state(states, "elevation", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", False)
+
+    # Test locking/unlocking.
+    notification_list: list[str] = []
+    command = commands.ControlCommand(
+        "elevation", commands.ControlCommand.Action.UNLOCK, "test"
+    )
+    assert control_manager.process_command(notification_list, command) == True
+    assert len(notification_list) == 1
+    assert "The elevation is already unlocked." in notification_list
+    states = control_manager.get_states()
+    _check_control_state(states, "back", controls.Control.State.MOVE_DOWN)
+    _check_control_state(states, "legs", controls.Control.State.IDLE)
+    _check_control_state(states, "elevation", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", False)
+
+    notification_list: list[str] = []
+    command = commands.ControlCommand(
+        "elevation", commands.ControlCommand.Action.LOCK, "test"
+    )
+    assert control_manager.process_command(notification_list, command) == True
+    assert len(notification_list) == 1
+    assert "Locked the elevation." in notification_list
+    states = control_manager.get_states()
+    _check_control_state(states, "back", controls.Control.State.MOVE_DOWN)
+    _check_control_state(states, "legs", controls.Control.State.IDLE)
+    _check_control_state(states, "elevation", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", True)
+
+    notification_list: list[str] = []
+    command = commands.ControlCommand(
+        "elevation", commands.ControlCommand.Action.LOCK, "test"
+    )
+    assert control_manager.process_command(notification_list, command) == True
+    assert len(notification_list) == 1
+    assert "The elevation is already locked." in notification_list
+    states = control_manager.get_states()
+    _check_control_state(states, "back", controls.Control.State.MOVE_DOWN)
+    _check_control_state(states, "legs", controls.Control.State.IDLE)
+    _check_control_state(states, "elevation", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", True)
+
+    notification_list: list[str] = []
+    command = commands.ControlCommand(
+        "elevation", commands.ControlCommand.Action.MOVE_DOWN, "test"
+    )
+    assert control_manager.process_command(notification_list, command) == True
+    control_manager.process_controls(notification_list)
+    assert len(notification_list) == 1
+    assert "Cannot move the elevation, it is locked." in notification_list
+    states = control_manager.get_states()
+    _check_control_state(states, "back", controls.Control.State.MOVE_DOWN)
+    _check_control_state(states, "legs", controls.Control.State.IDLE)
+    _check_control_state(states, "elevation", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", True)
+
+    notification_list: list[str] = []
+    command = commands.ControlCommand(
+        "elevation", commands.ControlCommand.Action.UNLOCK, "test"
+    )
+    assert control_manager.process_command(notification_list, command) == True
+    assert len(notification_list) == 1
+    assert "Unlocked the elevation." in notification_list
+    states = control_manager.get_states()
+    _check_control_state(states, "back", controls.Control.State.MOVE_DOWN)
+    _check_control_state(states, "legs", controls.Control.State.IDLE)
+    _check_control_state(states, "elevation", controls.Control.State.IDLE)
+    lock_states = control_manager.get_lock_states()
+    _check_control_lock_state(lock_states, "back", False)
+    _check_control_lock_state(lock_states, "legs", False)
+    _check_control_lock_state(lock_states, "elevation", False)
 
 
 def test_control_bootstrap(tmp_path: pathlib.Path) -> None:

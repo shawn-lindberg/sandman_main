@@ -14,27 +14,37 @@ class StatusCommand:
 
 @dataclasses.dataclass
 class ControlCommand:
-    """A command to move a control."""
+    """A command to do something with a control."""
 
     @enum.unique
-    class Direction(enum.Enum):
-        """Value indicating a direction in which the control can move."""
+    class Action(enum.Enum):
+        """Value indicating an action to perform with a control."""
 
-        UP = enum.auto()
-        DOWN = enum.auto()
+        MOVE_UP = enum.auto()
+        MOVE_DOWN = enum.auto()
+        LOCK = enum.auto()
+        UNLOCK = enum.auto()
 
         def as_string(self) -> str:
-            """Return a readable phrase describing the direction."""
+            """Return a readable phrase describing the action."""
             match self:
-                case ControlCommand.Direction.UP:
-                    return "up"
-                case ControlCommand.Direction.DOWN:
-                    return "down"
+                case ControlCommand.Action.MOVE_UP:
+                    return "move up"
+
+                case ControlCommand.Action.MOVE_DOWN:
+                    return "move down"
+
+                case ControlCommand.Action.LOCK:
+                    return "lock"
+
+                case ControlCommand.Action.UNLOCK:
+                    return "unlock"
+
                 case _:
                     typing.assert_never(self)
 
     control_name: str
-    direction: Direction
+    action: Action
     source: str
 
 
@@ -98,6 +108,10 @@ def parse_from_intent(
         case "MovePart":
             _logger.info("Attempting to recognize a move control intent.")
             return _parse_from_move_control_intent(intent_json)
+
+        case "LockControl":
+            _logger.info("Attempting to recognize a lock control intent.")
+            return _parse_from_lock_control_intent(intent_json)
 
         case "ControlRoutine":
             _logger.info("Attempting to recognize a control routine intent.")
@@ -178,7 +192,7 @@ def _parse_from_move_control_intent(
 
     # Try to find the control name and direction in the slots.
     control_name: str | None = None
-    direction: ControlCommand.Direction | None = None
+    action: ControlCommand.Action | None = None
 
     for slot in slots:
         if slot.name == "name":
@@ -186,25 +200,66 @@ def _parse_from_move_control_intent(
 
         elif slot.name == "direction":
             if slot.value == "raise":
-                direction = ControlCommand.Direction.UP
+                action = ControlCommand.Action.MOVE_UP
 
             elif slot.value == "lower":
-                direction = ControlCommand.Direction.DOWN
+                action = ControlCommand.Action.MOVE_DOWN
 
     if control_name is None:
         _logger.warning("Invalid move control intent: missing control name.")
         return None
 
-    if direction is None:
+    if action is None:
         _logger.warning("Invalid move control intent: missing direction.")
         return None
 
     _logger.info(
-        "Recognized a move control intent: move '%s' '%s'.",
+        "Recognized a move control intent: '%s' '%s'.",
         control_name,
-        direction.as_string(),
+        action.as_string(),
     )
-    return ControlCommand(control_name, direction, "voice")
+    return ControlCommand(control_name, action, "voice")
+
+
+def _parse_from_lock_control_intent(
+    intent_json: dict[str, typing.Any],
+) -> None | ControlCommand:
+    """Parse a lock control intent from JSON."""
+    slots = _parse_slots_from_intent(intent_json)
+
+    if len(slots) == 0:
+        _logger.warning("Invalid lock control intent: missing slots.")
+        return None
+
+    # Try to find the control name and action in the slots.
+    control_name: str | None = None
+    action: ControlCommand.Action | None = None
+
+    for slot in slots:
+        if slot.name == "name":
+            control_name = slot.value
+
+        elif slot.name == "action":
+            if slot.value == "lock":
+                action = ControlCommand.Action.LOCK
+
+            elif slot.value == "unlock":
+                action = ControlCommand.Action.UNLOCK
+
+    if control_name is None:
+        _logger.warning("Invalid lock control intent: missing control name.")
+        return None
+
+    if action is None:
+        _logger.warning("Invalid lock control intent: missing action.")
+        return None
+
+    _logger.info(
+        "Recognized a lock control intent: '%s' '%s'.",
+        action.as_string(),
+        control_name,
+    )
+    return ControlCommand(control_name, action, "voice")
 
 
 def _parse_from_control_routine_intent(

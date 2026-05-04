@@ -202,7 +202,9 @@ class Sandman:
                     self.__process_status_command(notification_list)
 
                 case commands.ControlCommand():
-                    self.__control_manager.process_command(command)
+                    self.__control_manager.process_command(
+                        notification_list, command
+                    )
 
                 case commands.RoutineCommand():
                     notification = self.__routine_manager.process_command(
@@ -220,6 +222,13 @@ class Sandman:
         self.__report_manager.add_status_event()
 
         notification_list.append("Sandman is running.")
+
+        # Add a notification for each locked control.
+        lock_states = self.__control_manager.get_lock_states()
+
+        for name, is_locked in lock_states.items():
+            if is_locked == True:
+                notification_list.append(f"The {name} is locked.")
 
         # Add a notification for each running routine.
         running_names = self.__routine_manager.get_running_names()
