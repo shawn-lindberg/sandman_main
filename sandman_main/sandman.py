@@ -3,6 +3,7 @@
 import logging
 import logging.handlers
 import pathlib
+import threading
 import time
 import typing
 
@@ -26,6 +27,7 @@ class Sandman:
         self.__time_source = time_util.TimeSource()
         # Change this if you want to run off device.
         self.__gpio_manager = gpio.GPIOManager(is_live_mode=True)
+        self.__should_stop = False
 
     def __setup_logging(self) -> None:
         """Set up logging."""
@@ -105,6 +107,16 @@ class Sandman:
         )
         return True
 
+    def start(self) -> None:
+        """Start the program."""
+        self.__should_stop = False
+        self.__run_thread = threading.Thread(target=self.run)
+        self.__run_thread.start()
+
+    def stop(self) -> None:
+        """Stop the program."""
+        self.__should_stop = True
+
     def run(self) -> None:
         """Run the program."""
         self.__logger.info("Starting Sandman...")
@@ -128,15 +140,11 @@ class Sandman:
 
         self.__mqtt_client.play_notification("Sandman initialized.")
 
-        try:
-            while True:
-                self.__process()
+        while self.__should_stop == False:
+            self.__process()
 
-                # Sleep for 10 µs.
-                time.sleep(0.01)
-
-        except KeyboardInterrupt:
-            pass
+            # Sleep for 10 ms.
+            time.sleep(0.01)
 
         self.__mqtt_client.stop()
 
