@@ -7,7 +7,6 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-  "flask>=3.1.3",
   "gpiod>=2.4.2",
   "paho-mqtt>=2.1.0",
   "sandman-core",
