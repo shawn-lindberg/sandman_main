@@ -5,9 +5,9 @@ import time
 import sandman_main
 
 if __name__ == "__main__":
-    sandman_app = sandman_main.create_app()
+    app = sandman_main.create_app()
 
-    sandman_app.start()
+    app.start()
 
     try:
         while True:
@@ -17,4 +17,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
 
-    sandman_app.stop()
+    app.stop()
