@@ -7,6 +7,7 @@ import threading
 import time
 import typing
 
+import fastapi
 import sandman_core.commands as commands
 import sandman_core.controls as controls
 import sandman_core.gpio as gpio
@@ -14,6 +15,7 @@ import sandman_core.reports as reports
 import sandman_core.routines as routines
 import sandman_core.setting as setting
 import sandman_core.time_util as time_util
+import uvicorn
 
 from . import mqtt
 
@@ -28,6 +30,8 @@ class Sandman:
         # Change this if you want to run off device.
         self.__gpio_manager = gpio.GPIOManager(is_live_mode=True)
         self.__should_stop = False
+        self.__api = fastapi.FastAPI()
+        self.__api_router = fastapi.APIRouter()
 
     def __setup_logging(self) -> None:
         """Set up logging."""
@@ -124,6 +128,8 @@ class Sandman:
         self.__control_manager.initialize(self.__base_dir)
         self.__routine_manager.initialize(self.__base_dir)
 
+        self.__start_rest_api()
+
         self.__mqtt_client = mqtt.MQTTClient()
 
         if self.__mqtt_client.connect() == False:
@@ -160,6 +166,27 @@ class Sandman:
     def is_testing(self) -> bool:
         """Return whether the app is in test mode."""
         return self.__is_testing
+
+    def get_health(self) -> dict[str, str]:
+        """Get the health."""
+        return {"health": "Healthy"}
+
+    def __start_rest_api(self) -> None:
+        """Start the REST API."""
+        self.__api_router.add_api_route(
+            "/health", self.get_health, methods=["GET"]
+        )
+
+        self.__api.include_router(self.__api_router)
+
+        self.__api_thread = threading.Thread(
+            target=self.__run_api, daemon=True
+        )
+        self.__api_thread.start()
+
+    def __run_api(self) -> None:
+        """Run the API thread."""
+        uvicorn.run(self.__api, host="127.0.0.1", port=8000, log_level="info")
 
     def __process(self) -> None:
         """Process during the main loop."""
