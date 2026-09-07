@@ -24,6 +24,7 @@ class Sandman:
     """The state and logic to run the Sandman application."""
 
     MAX_HEALTHY_HEARTBEAT_TIME_MS = 4000
+    REST_API_PORT = 8525
 
     def __init__(self) -> None:
         """Initialize the instance."""
@@ -208,7 +209,12 @@ class Sandman:
 
     def __run_api(self) -> None:
         """Run the API thread."""
-        uvicorn.run(self.__api, host="127.0.0.1", port=8000, log_level="info")
+        uvicorn.run(
+            self.__api,
+            host="127.0.0.1",
+            port=Sandman.REST_API_PORT,
+            log_level="info",
+        )
 
     def __process(self) -> None:
         """Process during the main loop."""
