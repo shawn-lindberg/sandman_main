@@ -23,12 +23,19 @@ from . import mqtt
 class Sandman:
     """The state and logic to run the Sandman application."""
 
+    MAX_HEALTHY_HEARTBEAT_TIME_MS = 4000
+
     def __init__(self) -> None:
         """Initialize the instance."""
         self.__timer = time_util.Timer()
         self.__time_source = time_util.TimeSource()
         # Change this if you want to run off device.
         self.__gpio_manager = gpio.GPIOManager(is_live_mode=True)
+        # This protects certain state from cross thread access.
+        self.__state_lock = threading.Lock()
+        self.__locked_state = {
+            "last_heartbeat_time": self.__timer.get_current_time()
+        }
         self.__should_stop = False
         self.__api = fastapi.FastAPI()
         self.__api_router = fastapi.APIRouter()
@@ -149,6 +156,11 @@ class Sandman:
         while self.__should_stop == False:
             self.__process()
 
+            with self.__state_lock:
+                self.__locked_state["last_heartbeat_time"] = (
+                    self.__timer.get_current_time()
+                )
+
             # Sleep for 10 ms.
             time.sleep(0.01)
 
@@ -169,6 +181,16 @@ class Sandman:
 
     def get_health(self) -> dict[str, str]:
         """Get the health."""
+        with self.__state_lock:
+            last_heartbeat_time = self.__locked_state["last_heartbeat_time"]
+
+        time_since_heartbeat_ms = self.__timer.get_time_since_ms(
+            last_heartbeat_time
+        )
+
+        if time_since_heartbeat_ms > Sandman.MAX_HEALTHY_HEARTBEAT_TIME_MS:
+            return {"health": "Unresponsive"}
+
         return {"health": "Healthy"}
 
     def __start_rest_api(self) -> None:
