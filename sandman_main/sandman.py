@@ -1,5 +1,6 @@
 """Entry point for the Sandman application."""
 
+import dataclasses
 import logging
 import logging.handlers
 import pathlib
@@ -23,8 +24,15 @@ from . import mqtt
 class Sandman:
     """The state and logic to run the Sandman application."""
 
-    MAX_HEALTHY_HEARTBEAT_TIME_MS = 4000
-    REST_API_PORT = 8525
+    __MAX_HEALTHY_HEARTBEAT_TIME_MS = 4000
+    __REST_API_PORT = 8525
+
+    @dataclasses.dataclass
+    class _LockedState:
+        """State that is locked for cross thread access."""
+
+        should_stop: bool
+        last_heartbeat_time: int
 
     def __init__(self) -> None:
         """Initialize the instance."""
@@ -34,10 +42,9 @@ class Sandman:
         self.__gpio_manager = gpio.GPIOManager(is_live_mode=True)
         # This protects certain state from cross thread access.
         self.__state_lock = threading.Lock()
-        self.__locked_state = {
-            "last_heartbeat_time": self.__timer.get_current_time()
-        }
-        self.__should_stop = False
+        self.__locked_state = Sandman._LockedState(
+            False, self.__timer.get_current_time()
+        )
         self.__api = fastapi.FastAPI()
         self.__api_router = fastapi.APIRouter()
 
@@ -121,13 +128,16 @@ class Sandman:
 
     def start(self) -> None:
         """Start the program."""
-        self.__should_stop = False
+        with self.__state_lock:
+            self.__locked_state.should_stop = False
+
         self.__run_thread = threading.Thread(target=self.run)
         self.__run_thread.start()
 
     def stop(self) -> None:
         """Stop the program."""
-        self.__should_stop = True
+        with self.__state_lock:
+            self.__locked_state.should_stop = True
 
     def run(self) -> None:
         """Run the program."""
@@ -154,13 +164,16 @@ class Sandman:
 
         self.__mqtt_client.play_notification("Sandman initialized.")
 
-        while self.__should_stop == False:
+        while True:
             self.__process()
 
             with self.__state_lock:
-                self.__locked_state["last_heartbeat_time"] = (
+                self.__locked_state.last_heartbeat_time = (
                     self.__timer.get_current_time()
                 )
+
+                if self.__locked_state.should_stop == True:
+                    break
 
             # Sleep for 10 ms.
             time.sleep(0.01)
@@ -183,13 +196,13 @@ class Sandman:
     def get_health(self) -> dict[str, str]:
         """Get the health."""
         with self.__state_lock:
-            last_heartbeat_time = self.__locked_state["last_heartbeat_time"]
+            last_heartbeat_time = self.__locked_state.last_heartbeat_time
 
         time_since_heartbeat_ms = self.__timer.get_time_since_ms(
             last_heartbeat_time
         )
 
-        if time_since_heartbeat_ms > Sandman.MAX_HEALTHY_HEARTBEAT_TIME_MS:
+        if time_since_heartbeat_ms > Sandman.__MAX_HEALTHY_HEARTBEAT_TIME_MS:
             return {"health": "Unresponsive"}
 
         return {"health": "Healthy"}
@@ -212,7 +225,7 @@ class Sandman:
         uvicorn.run(
             self.__api,
             host="127.0.0.1",
-            port=Sandman.REST_API_PORT,
+            port=Sandman.__REST_API_PORT,
             log_level="info",
         )
 
