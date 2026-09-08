@@ -3,6 +3,7 @@
 import dataclasses
 import logging
 import logging.handlers
+import os
 import pathlib
 import threading
 import time
@@ -222,9 +223,17 @@ class Sandman:
 
     def __run_api(self) -> None:
         """Run the API thread."""
+        # The host is based on whether this is running in a container or not.
+        is_containerized = os.environ.get("CONTAINERIZED", "False")
+
+        host = "127.0.0.1"
+
+        if is_containerized == "True":
+            host = "0.0.0.0"
+
         uvicorn.run(
             self.__api,
-            host="127.0.0.1",
+            host=host,
             port=Sandman.__REST_API_PORT,
             log_level="info",
         )
